@@ -1,261 +1,130 @@
 import time
 import pygame
 
+class Rectangle:
+    x = 0
+    y = 0
+    width = 0
+    height = 0
+
+    def __init__(self, x, y, width, height):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+class RGBA:
+    r = 0.0
+    g = 0.0
+    b = 0.0
+    a = 0.0
+
+    def __init__(self, r, g, b, a):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+
 class Global:
-    CHIP8_MEMORY_SIZE = 4096
-    CHIP8_REGISTER_COUNT = 16
-    CHIP8_STACK_SIZE = 16
-    CHIP8_KEYPAD_COUNT = 16
-    CHIP8_START_ADDRESS = 0x200
-    CHIP8_FONTSET_ADDRESS = 0x50
-    CHIP8_VIDEO_WIDTH = 64
-    CHIP8_VIDEO_HEIGHT = 32
-    CHIP8_SPRITE_WIDTH = 8
-    CHIP8_SPRITE_HEIGHT = 15
-    CHIP8_FONTSET_WIDTH = 8
-    CHIP8_FONTSET_HEIGHT = 5
-    
-class Chip8:
-    memory = [0] * Global.CHIP8_MEMORY_SIZE
-    register = [0] * Global.CHIP8_REGISTER_COUNT
-    i = 0
-    delay_timer = 0
-    sound_timer = 0
-    pc = 0
-    sp = 0
-    stack = [0] * Global.CHIP8_STACK_SIZE
-    keyboard = [False] * Global.CHIP8_KEYPAD_COUNT
-    video = [0] * (64 * 32)
-    opcode = 0
+    CHIP8_VIDEO_REFRESH_RATE = 60.0
 
-def log(string: str, *arguments: tuple):
-    print(string % arguments)
+class Emulator:
+    fps = 0.0
 
-def initialize():
-    result = Chip8()
+def log(string: str, *args: tuple):
+    print(string % args)
 
-    fontset = [
-        0xF0, 0x90, 0x90, 0x90, 0xF0,
-        0x20, 0x60, 0x20, 0x20, 0x70,
-        0xF0, 0x10, 0xF0, 0x80, 0xF0,
-        0xF0, 0x10, 0xF0, 0x10, 0xF0,
-        0x90, 0x90, 0xF0, 0x10, 0x10,
-        0xF0, 0x80, 0xF0, 0x10, 0xF0,
-        0xF0, 0x80, 0xF0, 0x90, 0xF0,
-        0xF0, 0x10, 0x20, 0x40, 0x40,
-        0xF0, 0x90, 0xF0, 0x90, 0xF0,
-        0xF0, 0x90, 0xF0, 0x10, 0xF0,
-        0xF0, 0x90, 0xF0, 0x90, 0x90,
-        0xE0, 0x90, 0xE0, 0x90, 0xE0,
-        0xF0, 0x80, 0x80, 0x80, 0xF0,
-        0xE0, 0x90, 0x90, 0x90, 0xE0,
-        0xF0, 0x80, 0xF0, 0x80, 0xF0,
-        0xF0, 0x80, 0xF0, 0x80, 0x80
-    ]
-
-    for i in range(len(fontset)):
-        result.memory[Global.CHIP8_FONTSET_ADDRESS + i] = fontset[i]
-
-    result.pc = Global.CHIP8_START_ADDRESS
-
+def rectangle_to_pygame_rect(rectangle: Rectangle):
+    result = (rectangle.x, rectangle.y, rectangle.width, rectangle.height)
     return result
 
-def load_rom(chip8: Chip8, file_name: str):
-    file = open(file_name, 'rb')
-    buffer = file.read()
-    file.close()
+def rgba_to_pygame_rgba(rgba: RGBA):
+    result = (int(rgba.r * 255.0), int(rgba.g * 255.0), int(rgba.b * 255.0), int(rgba.a * 255.0))
+    return result
 
-    for i in range(len(buffer)):
-        chip8.memory[Global.CHIP8_START_ADDRESS + i] = buffer[i]
+def draw_rectangle(video: pygame.Surface, rectangle: Rectangle, rgba: RGBA):
+    rectangle = rectangle_to_pygame_rect(rectangle)
+    rgba = rgba_to_pygame_rgba(rgba)
+    pygame.draw.rect(video, rgba, rectangle)
 
-    buffer = []
+def draw_character(video: pygame.Surface, font: pygame.font.Font, c: str, x: int, y: int, is_anti_alising: bool, text_rgba: RGBA):
+    result = 0
 
-def _00ee(chip8: Chip8):
-    chip8.pc = chip8.stack[chip8.sp]
-    chip8.sp -= 1
+    text_rgba = rgba_to_pygame_rgba(text_rgba)
+    surface = font.render(c, is_anti_alising, text_rgba)
+    video.blit(surface, (x, y))
 
-def _1nnn(chip8: Chip8):
-    nnn = chip8.opcode & 0x0FFF
-    chip8.pc = nnn
+    result = surface.get_rect().width
+    return result
 
-def _2nnn(chip8: Chip8):
-    # @TODO: check if the address is withing bounds
-    chip8.sp += 1
-    chip8.stack[chip8.sp] = chip8.pc
-    address = chip8.opcode & 0x0FFF
-    chip8.pc = address
+def draw_text(video: pygame.Surface, font: pygame.font.Font, text: str, x: int, y: int, is_anti_alising: bool, text_rgba: RGBA):
+    for c in text:
+        if c == '\n':
+            x = 0
+            y += font.get_height()
+            continue
+        x += draw_character(video, font, c, x, y, is_anti_alising, text_rgba)
 
-def _3xkk(chip8: Chip8):
-    x = (chip8.opcode >> 8) & 0x000F
-    kk = chip8.opcode & 0x00FF
+def emulator_initialize():
+    result = Emulator()
+    result.fps = Global.CHIP8_VIDEO_REFRESH_RATE
 
-    if chip8.register[x] == kk:
-        chip8.opcode += 2
-
-def _6xkk(chip8: Chip8):
-    kk = chip8.opcode & 0x00FF
-    x = (chip8.opcode >> 8) & 0x000F
-    assert((x >= 0) and (x < Global.CHIP8_REGISTER_COUNT))
-    chip8.register[x] = kk
-
-def _7xkk(chip8: Chip8):
-    kk = chip8.opcode & 0x00FF
-    x = (chip8.opcode >> 8) & 0x000F
-    assert((x >= 0) and (x < Global.CHIP8_REGISTER_COUNT))
-    chip8.register[x] += kk
-
-def annn(chip8: Chip8):
-    nnn = chip8.opcode & 0x0FFF
-    chip8.i = nnn
-
-def dxyn(chip8: Chip8):
-    # @TODO: fix this
-    address = chip8.i
-    height = chip8.opcode & 0x000F
-    register_x = (chip8.opcode >> 8) & 0x000F
-    assert((register_x >= 0) and (register_x < Global.CHIP8_REGISTER_COUNT))
-    register_y = (chip8.opcode >> 4) & 0x000F
-    assert((register_y >= 0) and (register_y < Global.CHIP8_REGISTER_COUNT))
-    x = chip8.register[register_x] % Global.CHIP8_SPRITE_WIDTH
-    y = chip8.register[register_y] % Global.CHIP8_SPRITE_HEIGHT
-
-    for i in range(height):
-        byte = chip8.memory[address + i]
-        for j in range(Global.CHIP8_SPRITE_WIDTH):
-            # 1 0 0 0 0 0 0 0
-            bit = (byte >> (7 - j)) & 1
-            new_x = (x + j) # % Global.CHIP8_VIDEO_WIDTH
-            new_y = (y + i) # % Global.CHIP8_VIDEO_HEIGHT
-            position = (new_y * Global.CHIP8_VIDEO_WIDTH) + new_x
-            chip8.video[position] ^= bit
-            chip8.register[0xF] = 1 if chip8.video[position] == 0 else 0
-
-    return
-
-def chip8_cycle(chip8: Chip8):
-    result = False
-
-    # Fetch opcode
-    chip8.opcode = (chip8.memory[chip8.pc] << 8) | chip8.memory[chip8.pc + 1]
-
-    # Increment PC by 2
-    chip8.pc += 2
-
-    # decode and execute
-    opcode = ((chip8.opcode & 0xF000) >> 12)
-
-    if chip8.opcode == 0x00E0:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif chip8.opcode == 0x00EE:
-        _00ee(chip8)
-    elif opcode == 0X0:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0x1:
-        _1nnn(chip8)
-    elif opcode == 0x2:
-        _2nnn(chip8)
-    elif opcode == 0x3:
-        _3xkk(chip8)
-    elif opcode == 0x4:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0x5:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0x6:
-        _6xkk(chip8)
-    elif opcode == 0x7:
-        _7xkk(chip8)
-    elif opcode == 0x8:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0x9:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0xA:
-        annn(chip8)
-    elif opcode == 0xB:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0xC:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0xD:
-        dxyn(chip8)
-    elif opcode == 0xE:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    elif opcode == 0xF:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-    else:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
-        
-    # if delay timer is greater than 0 decrement by 1
-    if chip8.delay_timer > 0:
-        chip8.delay_timer -= 1
-
-    # if sound timer is greater than 0 decrement by 1
-    if chip8.sound_timer > 0:
-        chip8.sound_timer -= 1
-
-    return True
+    return result
 
 def main():
     result = 1
 
-    pygame.init()
+    module_failed_count = pygame.init()[1]
+
+    if module_failed_count > 0:
+        log("pygame.init() failed with %d module(s)", module_failed_count)
+        return result
+    
     window_width = 1280
     window_height = 720
-    display = pygame.display.set_mode((window_width, window_height))
+    video = pygame.display.set_mode((window_width, window_height))
+
+    if video is None:
+        log("pygame.display.set_mode() failed")
+        pygame.quit()
+        return result
     
-    chip8 = initialize()
-    load_rom(chip8, "tetris.rom")
+    font = pygame.font.Font(None, 32)
 
+    if font is None:
+        log("pygame.font.Font failed()")
+        pygame.quit()
+        return result
+    
+    text = font.render("Hello, world!", True, (0, 0, 255))
+
+    pygame.display.set_caption("Emulator")
+    
+    emulator = emulator_initialize()
     is_running = True
-    fps = 60.0
-    inverse_fps = 1.0 / fps
-    last_counter = time.perf_counter_ns()    
-
+    last_counter = time.perf_counter_ns()
+    
     while is_running:
-        # Event loop
+        # Events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 is_running = False
 
         if not is_running:
             break
-
-        # 1 chip 8 cycle
-        if not chip8_cycle(chip8):
-            break
         
-
-        # draw time!
-        display.fill((255, 0, 0))
-        pixel_size = 8
-
-        for y in range(Global.CHIP8_VIDEO_HEIGHT):
-            for x in range(Global.CHIP8_VIDEO_WIDTH):
-                pixel = chip8.video[(y * Global.CHIP8_VIDEO_WIDTH) + x]
-
-                if pixel == 0:
-                    pygame.draw.rect(display, (0, 0, 0), pygame.Rect(x * pixel_size, y * pixel_size, pixel_size, pixel_size))
-                elif pixel == 1:
-                    pygame.draw.rect(display, (255, 255, 255), pygame.Rect(x * pixel_size, y * pixel_size, pixel_size, pixel_size))
-                else:
-                    assert("Video value is invalid!")
+        # Draw
+        video.fill((0, 0, 0))
+        draw_rectangle(video, Rectangle(0, 0, 100, 100), RGBA(1.0, 0.0, 0.0, 0.0))
+        draw_text(video, font, "Hello, world!\n  Hello, world!\n    Hello, world!", 0, 0, True, RGBA(1.0, 1.0, 1.0, 0.0))
 
         # Timer
         work_counter = time.perf_counter_ns()
-        while work_counter < inverse_fps:
+        while work_counter < (1.0 / emulator.fps):
             work_counter = time.perf_counter_ns()
         end_counter = time.perf_counter_ns()
 
-        # Update screen
+        # Swap buffers/presentation
         pygame.display.flip()
 
         last_counter = end_counter
