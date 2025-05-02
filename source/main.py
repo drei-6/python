@@ -74,51 +74,63 @@ def _00ee(chip8: Chip8):
     chip8.pc = chip8.stack[chip8.sp]
     chip8.sp -= 1
 
+def _1nnn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF
+    chip8.pc = nnn
+
 def _2nnn(chip8: Chip8):
+    # @TODO: check if the address is withing bounds
     chip8.sp += 1
     chip8.stack[chip8.sp] = chip8.pc
     address = chip8.opcode & 0x0FFF
-    # @TODO: check if the address is withing bounds
     chip8.pc = address
 
+def _3xkk(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    kk = chip8.opcode & 0x00FF
+
+    if chip8.register[x] == kk:
+        chip8.opcode += 2
+
 def _6xkk(chip8: Chip8):
-    value = chip8.opcode & 0x00FF
-    register_index = (chip8.opcode >> 8) & 0x000F
-    assert((register_index >= 0) and (register_index < Global.CHIP8_REGISTER_COUNT))
-    chip8.register[register_index] = value
+    kk = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0x000F
+    assert((x >= 0) and (x < Global.CHIP8_REGISTER_COUNT))
+    chip8.register[x] = kk
 
 def _7xkk(chip8: Chip8):
-    value = chip8.opcode & 0x00FF
-    register_index = (chip8.opcode >> 8) & 0x000F
-    assert((register_index >= 0) and (register_index < Global.CHIP8_REGISTER_COUNT))
-    chip8.register[register_index] += value
+    kk = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0x000F
+    assert((x >= 0) and (x < Global.CHIP8_REGISTER_COUNT))
+    chip8.register[x] += kk
 
 def annn(chip8: Chip8):
-    chip8.i = chip8.opcode & 0xFFF
+    nnn = chip8.opcode & 0x0FFF
+    chip8.i = nnn
 
 def dxyn(chip8: Chip8):
     # @TODO: fix this
     address = chip8.i
-    n = chip8.opcode & 0x000F
+    height = chip8.opcode & 0x000F
     register_x = (chip8.opcode >> 8) & 0x000F
     assert((register_x >= 0) and (register_x < Global.CHIP8_REGISTER_COUNT))
     register_y = (chip8.opcode >> 4) & 0x000F
     assert((register_y >= 0) and (register_y < Global.CHIP8_REGISTER_COUNT))
-    x = chip8.register[register_x]
-    y = chip8.register[register_y]
+    x = chip8.register[register_x] % Global.CHIP8_SPRITE_WIDTH
+    y = chip8.register[register_y] % Global.CHIP8_SPRITE_HEIGHT
 
-    for i in range(n):
+    for i in range(height):
+        byte = chip8.memory[address + i]
         for j in range(Global.CHIP8_SPRITE_WIDTH):
-            byte = chip8.memory[address + j]
-            chip8.video[(i * Global.CHIP8_SPRITE_WIDTH) + j] ^= byte
-            
-            if chip8.video[(i * Global.CHIP8_SPRITE_WIDTH) + j] == 0:
-                chip8.register[0xF] = 1
-            else:
-                chip8.register[0xF] = 0
+            # 1 0 0 0 0 0 0 0
+            bit = (byte >> (7 - j)) & 1
+            new_x = (x + j) # % Global.CHIP8_VIDEO_WIDTH
+            new_y = (y + i) # % Global.CHIP8_VIDEO_HEIGHT
+            position = (new_y * Global.CHIP8_VIDEO_WIDTH) + new_x
+            chip8.video[position] ^= bit
+            chip8.register[0xF] = 1 if chip8.video[position] == 0 else 0
 
     return
-
 
 def chip8_cycle(chip8: Chip8):
     result = False
@@ -141,13 +153,11 @@ def chip8_cycle(chip8: Chip8):
         print("Invalid instruction: ", hex(chip8.opcode))
         return result
     elif opcode == 0x1:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
+        _1nnn(chip8)
     elif opcode == 0x2:
         _2nnn(chip8)
     elif opcode == 0x3:
-        print("Invalid instruction: ", hex(chip8.opcode))
-        return result
+        _3xkk(chip8)
     elif opcode == 0x4:
         print("Invalid instruction: ", hex(chip8.opcode))
         return result
@@ -222,6 +232,22 @@ def main():
         # 1 chip 8 cycle
         if not chip8_cycle(chip8):
             break
+        
+
+        # draw time!
+        display.fill((255, 0, 0))
+        pixel_size = 8
+
+        for y in range(Global.CHIP8_VIDEO_HEIGHT):
+            for x in range(Global.CHIP8_VIDEO_WIDTH):
+                pixel = chip8.video[(y * Global.CHIP8_VIDEO_WIDTH) + x]
+
+                if pixel == 0:
+                    pygame.draw.rect(display, (0, 0, 0), pygame.Rect(x * pixel_size, y * pixel_size, pixel_size, pixel_size))
+                elif pixel == 1:
+                    pygame.draw.rect(display, (255, 255, 255), pygame.Rect(x * pixel_size, y * pixel_size, pixel_size, pixel_size))
+                else:
+                    assert("Video value is invalid!")
 
         # Timer
         work_counter = time.perf_counter_ns()
