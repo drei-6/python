@@ -28,8 +28,27 @@ class RGBA:
 class Global:
     CHIP8_VIDEO_REFRESH_RATE = 60.0
 
+class Button:
+    is_down = False
+    was_down = False # @NOTE: Updated by the caller
+
+class Mouse:
+    x = 0
+    y = 0
+    left_button = Button()
+    middle_button = Button()
+    right_button = Button()
+
+class Keyboard:
+    pass
+
+class Input:
+    mouse = Mouse()
+    keyboard = Keyboard()
+
 class Emulator:
     fps = 0.0
+    is_debugging = False
 
 def log(string: str, *args: tuple):
     print(string % args)
@@ -39,7 +58,7 @@ def rectangle_to_pygame_rect(rectangle: Rectangle):
     return result
 
 def rgba_to_pygame_rgba(rgba: RGBA):
-    result = (int(rgba.r * 255.0), int(rgba.g * 255.0), int(rgba.b * 255.0), int(rgba.a * 255.0))
+    result = (int(rgba.r * 255.0), int(rgba.g * 255.0), int(rgba.b * 255.0), int((1.0 - rgba.a) * 255.0))
     return result
 
 def draw_rectangle(video: pygame.Surface, rectangle: Rectangle, rgba: RGBA):
@@ -47,23 +66,36 @@ def draw_rectangle(video: pygame.Surface, rectangle: Rectangle, rgba: RGBA):
     rgba = rgba_to_pygame_rgba(rgba)
     pygame.draw.rect(video, rgba, rectangle)
 
-def draw_character(video: pygame.Surface, font: pygame.font.Font, c: str, x: int, y: int, is_anti_alising: bool, text_rgba: RGBA):
+def draw_character(video: pygame.Surface, font: pygame.font.Font, c: str, x: int, y: int, is_anti_alising: bool, text_rgba: RGBA, background_rgba: RGBA):
     result = 0
 
     text_rgba = rgba_to_pygame_rgba(text_rgba)
-    surface = font.render(c, is_anti_alising, text_rgba)
-    video.blit(surface, (x, y))
+    background_rgba = rgba_to_pygame_rgba(background_rgba)
+    surface_foreground = font.render(c, is_anti_alising, text_rgba)
+    foreground_dimension = (surface_foreground.get_width(), surface_foreground.get_height())
+    surface_background = pygame.Surface(foreground_dimension)
+    surface_background.fill(background_rgba)
+    surface_background.set_alpha(background_rgba[3])
+    video.blit(surface_background, (x, y))
+    video.blit(surface_foreground, (x, y))
 
-    result = surface.get_rect().width
+    result = surface_background.get_rect().width
     return result
 
-def draw_text(video: pygame.Surface, font: pygame.font.Font, text: str, x: int, y: int, is_anti_alising: bool, text_rgba: RGBA):
+def draw_static_text(video: pygame.Surface, font: pygame.font.Font, text: str, x: int, y: int, max_width: int, max_height: int):
+    pass
+
+def draw_debugger(video: pygame.Surface, input:Input, font: pygame.font.Font, x: int, y: int):
+    if input.mouse.left_button.is_down:
+        draw_rectangle(video, Rectangle(0, 0, 500, 500), RGBA(1.0, 0.0, 0.0, 0.0))
+
+def draw_text(video: pygame.Surface, font: pygame.font.Font, text: str, x: int, y: int, is_anti_alising: bool, text_rgba: RGBA, background_rgba: RGBA):
     for c in text:
         if c == '\n':
             x = 0
             y += font.get_height()
             continue
-        x += draw_character(video, font, c, x, y, is_anti_alising, text_rgba)
+        x += draw_character(video, font, c, x, y, is_anti_alising, text_rgba, background_rgba)
 
 def emulator_initialize():
     result = Emulator()
@@ -95,12 +127,11 @@ def main():
         log("pygame.font.Font failed()")
         pygame.quit()
         return result
-    
-    text = font.render("Hello, world!", True, (0, 0, 255))
 
     pygame.display.set_caption("Emulator")
     
     emulator = emulator_initialize()
+    input = Input()
     is_running = True
     last_counter = time.perf_counter_ns()
     
@@ -109,14 +140,30 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 is_running = False
+            elif (event.type == pygame.KEYDOWN) or (event.type == pygame.KEYUP):
+                is_down = event.type == pygame.KEYDOWN
+            elif (event.type == pygame.MOUSEBUTTONDOWN) or (event.type == pygame.MOUSEBUTTONUP):
+                is_down = event.type == pygame.MOUSEBUTTONDOWN
+                mouse = input.mouse
+
+                match event.button:
+                    case 1:
+                        mouse.left_button.is_down = is_down
+                    case 2:
+                        mouse.middle_button.is_down = is_down
+                    case 3:
+                        mouse.right_button.is_down = is_down
+                    case _:
+                        pass
 
         if not is_running:
             break
         
         # Draw
         video.fill((0, 0, 0))
-        draw_rectangle(video, Rectangle(0, 0, 100, 100), RGBA(1.0, 0.0, 0.0, 0.0))
-        draw_text(video, font, "Hello, world!\n  Hello, world!\n    Hello, world!", 0, 0, True, RGBA(1.0, 1.0, 1.0, 0.0))
+        
+        if emulator.is_debugging or 1:
+            draw_debugger(video, input, font, 0, 0)
 
         # Timer
         work_counter = time.perf_counter_ns()
