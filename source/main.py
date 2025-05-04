@@ -1,4 +1,7 @@
+# someone is setting the registers to floating points, which is bad :(
+
 import time
+import random
 import pygame
 
 class Rectangle:
@@ -184,6 +187,11 @@ def chip8_set_register(chip8: Chip8, index: int, value: int):
     assert((index >= 0) and (index < Global.CHIP8_REGISTER_COUNT))
     chip8.register[index] = value
 
+def _00E0(chip8: Chip8):
+    for y in range(Global.CHIP8_VIDEO_HEIGHT):
+        for x in range(Global.CHIP8_VIDEO_WIDTH):
+            chip8.video[(y * Global.CHIP8_VIDEO_WIDTH) + x] = 0
+
 def _00EE(chip8: Chip8):
     chip8.pc = chip8.stack[chip8.sp]
     chip8.sp -= 1
@@ -193,9 +201,9 @@ def _1nnn(chip8: Chip8):
     chip8.pc = nnn
 
 def _2nnn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF
     chip8.sp += 1
     chip8.stack[chip8.sp] = chip8.pc
-    nnn = chip8.opcode & 0x0FFF
     chip8.pc = nnn
 
 def _3xnn(chip8: Chip8):
@@ -206,15 +214,30 @@ def _3xnn(chip8: Chip8):
     if vx == nn:
         chip8.pc += 2
 
+def _4xnn(chip8: Chip8):
+    nn = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+
+    if vx != nn:
+        chip8.pc += 2
+
 def _6xnn(chip8: Chip8):
     nn = chip8.opcode & 0x00FF
-    x = (chip8.opcode >> 8) & 0xF
+    x = (chip8.opcode >> 8) & 0x000F
     chip8_set_register(chip8, x, nn)
 
 def _7xnn(chip8: Chip8):
     nn = chip8.opcode & 0x00FF
-    x = (chip8.opcode >> 8) & 0xF
-    chip8_set_register(chip8, x, nn)
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    chip8_set_register(chip8, x, (vx + nn) % 256)
+
+def _8xy0(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vy = chip8_get_register(chip8, y)
+    chip8_set_register(chip8, x, vy)
 
 def annn(chip8: Chip8):
     nnn = chip8.opcode & 0x0FFF
@@ -225,25 +248,77 @@ def bnnn(chip8: Chip8):
     v0 = chip8_get_register(chip8, 0)
     chip8.pc = nnn + v0
 
+def cxnn(chip8: Chip8):
+    nn = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0x000F
+    value = random.randint(0, 255) & nn
+    chip8_set_register(chip8, x, value)
+
 def dxyn(chip8: Chip8):
     sprite_height = chip8.opcode & 0x000F
     x = (chip8.opcode >> 8) & 0x000F
     y = (chip8.opcode >> 4) & 0x000F
-    x = chip8_get_register(chip8, x)
-    y = chip8_get_register(chip8, y)
+    x = chip8_get_register(chip8, x) % Global.CHIP8_VIDEO_WIDTH
+    y = chip8_get_register(chip8, y) % Global.CHIP8_VIDEO_HEIGHT
+    chip8_set_register(chip8, 0xF, 0)
 
     for i in range(sprite_height):
-        byte = chip8.memory[chip8.i]
+        byte = chip8.memory[chip8.i + i]
         for j in range(Global.CHIP8_SPRITE_WIDTH):
-            pixel = byte >> (7 - j) & 1
+            pixel = (byte >> (7 - j)) & 1
             video_index = ((y + i) * Global.CHIP8_VIDEO_WIDTH) + (x + j)
-            previous_pixel = chip8.video[video_index]
+
+            if ((y + i) >= Global.CHIP8_VIDEO_HEIGHT) or ((x + j) >= Global.CHIP8_VIDEO_WIDTH):
+                return
+
+            if pixel != chip8.video[video_index]:
+                chip8_set_register(chip8, 0xF, 1)
+
             chip8.video[video_index] ^= pixel
 
-            if (previous_pixel == 1) and (chip8.video[video_index] == 0):
-                chip8_set_register(chip8, 0xF, 1)
-            else:
-                chip8_set_register(chip8, 0xF, 0)
+def fx15(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    chip8.delay_timer = vx
+
+def fx1e(chip8: Chip8):
+    i = chip8.i
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    chip8.i = vx + i
+
+def fx29(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    chip8.i = vx
+
+def fx33(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    
+    digit = vx % 10
+    vx /= 10
+    tens = vx % 10
+    vx /= 10
+    hundreds = vx % 10
+    vx /= 10
+    
+    chip8.memory[chip8.i] = hundreds
+    chip8.memory[chip8.i + 1] = tens
+    chip8.memory[chip8.i + 2] = digit
+
+def fx55(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+
+    for i in range(x + 1):
+        chip8.memory[chip8.i + i] = chip8_get_register(chip8, i)
+
+def fx65(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+
+    for i in range(vx + 1):
+        chip8_set_register(chip8, i, chip8.memory[chip8.i + i])
 
 def chip8_cycle(chip8: Chip8):
     result = False
@@ -256,7 +331,9 @@ def chip8_cycle(chip8: Chip8):
     # Decode and execute
     opcode = (chip8.opcode >> 12) & 0x000F
 
-    if chip8.opcode == 0xEE:
+    if chip8.opcode == 0xE0:
+        _00E0(chip8)
+    elif chip8.opcode == 0xEE:
         _00EE(chip8)
     elif opcode == 0x01:
         _1nnn(chip8)
@@ -264,16 +341,42 @@ def chip8_cycle(chip8: Chip8):
         _2nnn(chip8)
     elif opcode == 0x03:
         _3xnn(chip8)
+    elif opcode == 0x04:
+        _4xnn(chip8)
     elif opcode == 0x06:
         _6xnn(chip8)
     elif opcode == 0x07:
         _7xnn(chip8)
+    elif opcode == 0x08:
+        if (chip8.opcode & 0x000F) == 0:
+            _8xy0(chip8)
+        else:
+            log("Invalid instruction: %X", chip8.opcode)
+            return result
     elif opcode == 0x0A:
         annn(chip8)
     elif opcode == 0x0B:
         bnnn(chip8)
+    elif opcode == 0x0C:
+        cxnn(chip8)
     elif opcode == 0x0D:
         dxyn(chip8)
+    elif opcode == 0x0F:
+        if (chip8.opcode & 0x00FF) == 0x15:
+            fx15(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x1E:
+            fx1e(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x29:
+            fx29(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x33:
+            fx33(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x55:
+            fx55(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x65:
+            fx65(chip8)
+        else:
+            log("Invalid instruction: %X", chip8.opcode)
+            return result
     else:
         log("Invalid instruction: %X", chip8.opcode)
         return result
@@ -354,12 +457,14 @@ def main():
         # Draw
         video.fill((0, 0, 0))
 
-        pixel_size = 16 # experiment
+        pixel_size = 16
 
         for y in range(Global.CHIP8_VIDEO_HEIGHT):
             for x in range(Global.CHIP8_VIDEO_WIDTH):
                 if emulator.chip8.video[(y * Global.CHIP8_VIDEO_WIDTH) + x] != 0:
                     draw_rectangle(video, Rectangle(x * pixel_size, y * pixel_size, pixel_size, pixel_size), RGBA(1.0, 1.0, 1.0, 0.0))
+                else:
+                    draw_rectangle(video, Rectangle(x * pixel_size, y * pixel_size, pixel_size, pixel_size), RGBA(0.0, 1.0, 1.0, 0.0))
 
         # Timer
         work_counter = time.perf_counter_ns()
