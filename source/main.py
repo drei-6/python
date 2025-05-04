@@ -1,9 +1,3 @@
-# render.txt
-"""
-type = emulator ; the video of the emulator
-type = rectangle, x = 0, y = 0, width = MAX_WIDTH, height = MAX_HEIGHT ; background
-"""
-
 import time
 import pygame
 
@@ -37,6 +31,10 @@ class Global:
     CHIP8_REGISTER_COUNT = 16
     CHIP8_ENTRY_POINT_ADDRESS = 0x200
     CHIP8_FONTSET_ADDRESS = 0x50
+    CHIP8_SPRITE_WIDTH = 8
+    CHIP8_VIDEO_WIDTH = 64
+    CHIP8_VIDEO_HEIGHT = 32
+    CHIP8_MEMORY_SIZE = 4096
 
 class Button:
     is_down = False
@@ -70,11 +68,12 @@ class Render:
         self.font = font
 
 class Chip8:
-    memory = [0] * 4096
-    video = [0] * (64 * 32)
+    memory = [0] * Global.CHIP8_MEMORY_SIZE
+    video = [0] * (Global.CHIP8_VIDEO_WIDTH * Global.CHIP8_VIDEO_HEIGHT)
     pc = 0
     i = 0
     stack = [0] * Global.CHIP8_STACK_DEPTH
+    sp = 0
     delay_timer = 0
     sound_timer = 0
     register = [0] * Global.CHIP8_REGISTER_COUNT
@@ -125,21 +124,6 @@ def draw_text(video: pygame.Surface, font: pygame.font.Font, text: str, x: int, 
             continue
         x += draw_character(video, font, c, x, y, is_anti_alising, text_rgba, background_rgba)
 
-def draw_button(render: Render, x: int, y: int, text: str):
-    draw_rectangle(render.video, Rectangle(x, y, 100, 100), RGBA(1.0, 1.0, 1.0, 0.0))
-
-def draw_menu():
-    pass
-
-def draw_menubar():
-    pass
-
-def draw_gui(render: Render, gui: GUI):
-    draw_button(render, 0, 0, "Hello, world!!!")
-
-def update_gui(video: pygame.Surface, input: Input, font: pygame.font.Font, gui: GUI):
-    pass
-
 def emulator_initialize():
     result = Emulator()
     result.fps = Global.CHIP8_VIDEO_REFRESH_RATE
@@ -169,6 +153,8 @@ def chip8_initialize(chip8: Chip8):
     for i in range(len(fontset)):
         chip8.memory[Global.CHIP8_FONTSET_ADDRESS + i] = fontset[i]
 
+    chip8.pc = Global.CHIP8_ENTRY_POINT_ADDRESS
+
 def chip8_load_rom(chip8: Chip8, file_name: str):
     result = False
 
@@ -189,12 +175,118 @@ def chip8_load_rom(chip8: Chip8, file_name: str):
 
     return True
 
+def chip8_get_register(chip8: Chip8, index: int):
+    assert((index >= 0) and (index < Global.CHIP8_REGISTER_COUNT))
+    result = chip8.register[index]
+    return result
+
+def chip8_set_register(chip8: Chip8, index: int, value: int):
+    assert((index >= 0) and (index < Global.CHIP8_REGISTER_COUNT))
+    chip8.register[index] = value
+
+def _00EE(chip8: Chip8):
+    chip8.pc = chip8.stack[chip8.sp]
+    chip8.sp -= 1
+
+def _1nnn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF
+    chip8.pc = nnn
+
+def _2nnn(chip8: Chip8):
+    chip8.sp += 1
+    chip8.stack[chip8.sp] = chip8.pc
+    nnn = chip8.opcode & 0x0FFF
+    chip8.pc = nnn
+
+def _3xnn(chip8: Chip8):
+    nn = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    
+    if vx == nn:
+        chip8.pc += 2
+
+def _6xnn(chip8: Chip8):
+    nn = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0xF
+    chip8_set_register(chip8, x, nn)
+
+def _7xnn(chip8: Chip8):
+    nn = chip8.opcode & 0x00FF
+    x = (chip8.opcode >> 8) & 0xF
+    chip8_set_register(chip8, x, nn)
+
+def annn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF
+    chip8.i = nnn
+
+def bnnn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF
+    v0 = chip8_get_register(chip8, 0)
+    chip8.pc = nnn + v0
+
+def dxyn(chip8: Chip8):
+    sprite_height = chip8.opcode & 0x000F
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    x = chip8_get_register(chip8, x)
+    y = chip8_get_register(chip8, y)
+
+    for i in range(sprite_height):
+        byte = chip8.memory[chip8.i]
+        for j in range(Global.CHIP8_SPRITE_WIDTH):
+            pixel = byte >> (7 - j) & 1
+            video_index = ((y + i) * Global.CHIP8_VIDEO_WIDTH) + (x + j)
+            previous_pixel = chip8.video[video_index]
+            chip8.video[video_index] ^= pixel
+
+            if (previous_pixel == 1) and (chip8.video[video_index] == 0):
+                chip8_set_register(chip8, 0xF, 1)
+            else:
+                chip8_set_register(chip8, 0xF, 0)
+
 def chip8_cycle(chip8: Chip8):
-    # Fetch
+    result = False
+
+    # Fetch (big endian)
+    chip8.opcode = (chip8.memory[chip8.pc] << 8) | chip8.memory[chip8.pc + 1]
+
+    chip8.pc += 2
+
     # Decode and execute
+    opcode = (chip8.opcode >> 12) & 0x000F
+
+    if chip8.opcode == 0xEE:
+        _00EE(chip8)
+    elif opcode == 0x01:
+        _1nnn(chip8)
+    elif opcode == 0x02:
+        _2nnn(chip8)
+    elif opcode == 0x03:
+        _3xnn(chip8)
+    elif opcode == 0x06:
+        _6xnn(chip8)
+    elif opcode == 0x07:
+        _7xnn(chip8)
+    elif opcode == 0x0A:
+        annn(chip8)
+    elif opcode == 0x0B:
+        bnnn(chip8)
+    elif opcode == 0x0D:
+        dxyn(chip8)
+    else:
+        log("Invalid instruction: %X", chip8.opcode)
+        return result
+
     # delay timer
+    if chip8.delay_timer > 0:
+        chip8.delay_timer -= 1
+
     # sound timer
-    pass
+    if chip8.sound_timer > 0:
+        chip8.sound_timer -= 1
+
+    return True
 
 def main():
     result = 1
@@ -228,7 +320,6 @@ def main():
     chip8_load_rom(emulator.chip8, "tetris.rom")
 
     input = Input()
-    render = Render(video, input, font)
     gui = GUI()
     is_running = True
     last_counter = time.perf_counter_ns()
@@ -257,14 +348,18 @@ def main():
         if not is_running:
             break
 
-        # Update GUI
-        update_gui(video, input, font, gui)
+        if not chip8_cycle(emulator.chip8):
+            break
         
         # Draw
         video.fill((0, 0, 0))
 
-        # Draw GUI
-        draw_gui(render, gui)
+        pixel_size = 16 # experiment
+
+        for y in range(Global.CHIP8_VIDEO_HEIGHT):
+            for x in range(Global.CHIP8_VIDEO_WIDTH):
+                if emulator.chip8.video[(y * Global.CHIP8_VIDEO_WIDTH) + x] != 0:
+                    draw_rectangle(video, Rectangle(x * pixel_size, y * pixel_size, pixel_size, pixel_size), RGBA(1.0, 1.0, 1.0, 0.0))
 
         # Timer
         work_counter = time.perf_counter_ns()
