@@ -1,5 +1,3 @@
-# someone is setting the registers to floating points, which is bad :(
-
 import time
 import random
 import pygame
@@ -38,6 +36,7 @@ class Global:
     CHIP8_VIDEO_WIDTH = 64
     CHIP8_VIDEO_HEIGHT = 32
     CHIP8_MEMORY_SIZE = 4096
+    CHIP8_KEYPAD_COUNT = 16
 
 class Button:
     is_down = False
@@ -57,19 +56,6 @@ class Input:
     mouse = Mouse()
     keyboard = Keyboard()
 
-class GUI:
-    pass
-
-class Render:
-    video = 0
-    input = 0
-    font = 0
-
-    def __init__(self, video: pygame.Surface, input: Input, font: pygame.font.Font):
-        self.video = video
-        self.input = input
-        self.font = font
-
 class Chip8:
     memory = [0] * Global.CHIP8_MEMORY_SIZE
     video = [0] * (Global.CHIP8_VIDEO_WIDTH * Global.CHIP8_VIDEO_HEIGHT)
@@ -81,6 +67,7 @@ class Chip8:
     sound_timer = 0
     register = [0] * Global.CHIP8_REGISTER_COUNT
     opcode = 0
+    keyboard = [0] * Global.CHIP8_KEYPAD_COUNT
 
 class Emulator:
     fps = 0.0
@@ -184,7 +171,7 @@ def chip8_get_register(chip8: Chip8, index: int):
     return result
 
 def chip8_set_register(chip8: Chip8, index: int, value: int):
-    assert((index >= 0) and (index < Global.CHIP8_REGISTER_COUNT))
+    assert((index >= 0) and (index < Global.CHIP8_REGISTER_COUNT))    
     chip8.register[index] = value
 
 def _00E0(chip8: Chip8):
@@ -210,7 +197,7 @@ def _3xnn(chip8: Chip8):
     nn = chip8.opcode & 0x00FF
     x = (chip8.opcode >> 8) & 0x000F
     vx = chip8_get_register(chip8, x)
-    
+
     if vx == nn:
         chip8.pc += 2
 
@@ -220,6 +207,15 @@ def _4xnn(chip8: Chip8):
     vx = chip8_get_register(chip8, x)
 
     if vx != nn:
+        chip8.pc += 2
+
+def _5xy0(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    if vx == vy:
         chip8.pc += 2
 
 def _6xnn(chip8: Chip8):
@@ -238,6 +234,101 @@ def _8xy0(chip8: Chip8):
     y = (chip8.opcode >> 4) & 0x000F
     vy = chip8_get_register(chip8, y)
     chip8_set_register(chip8, x, vy)
+
+def _8xy1(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+    chip8_set_register(chip8, x, vx | vy)
+
+def _8xy2(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+    chip8_set_register(chip8, x, vx & vy)
+
+def _8xy3(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+    chip8_set_register(chip8, x, vx ^ vy)
+
+def _8xy4(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    if (vx + vy) > 255:
+        chip8.register[0xF] = 1
+    else:
+        chip8.register[0xF] = 0
+    
+    chip8_set_register(chip8, x, (vx + vy) % 256)
+
+def _8xy5(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    if vx > vy:
+        chip8.register[0xF] = 1
+    else:
+        chip8.register[0xF] = 0
+    
+    chip8_set_register(chip8, x, (vx - vy) % 256)
+
+def _8xy6(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    """chip8.register[0xF] = vx & 1
+    chip8_set_register(chip8, x, vy)
+    chip8_set_register(chip8, x, vx >> 1)"""
+    
+    chip8.register[0xF] = vx & 1
+    chip8_set_register(chip8, x, vx >> 1)
+
+def _8xy7(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    if vy > vx:
+        chip8.register[0xF] = 1
+    else:
+        chip8.register[0xF] = 0
+
+    chip8_set_register(chip8, x, (vy - vx) % 256)
+
+def _8xyE(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    if vx & 0x80:
+        chip8.register[0xF] = 1
+    else:
+        chip8.register[0xF] = 0
+
+    chip8_set_register(chip8, x, (vx << 1) % 256)
+
+def _9xy0(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    y = (chip8.opcode >> 4) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    vy = chip8_get_register(chip8, y)
+
+    if vx != vy:
+        chip8.pc += 2
 
 def annn(chip8: Chip8):
     nnn = chip8.opcode & 0x0FFF
@@ -268,13 +359,32 @@ def dxyn(chip8: Chip8):
             pixel = (byte >> (7 - j)) & 1
             video_index = ((y + i) * Global.CHIP8_VIDEO_WIDTH) + (x + j)
 
-            if ((y + i) >= Global.CHIP8_VIDEO_HEIGHT) or ((x + j) >= Global.CHIP8_VIDEO_WIDTH):
-                return
+            if pixel:
+                if ((y + i) >= Global.CHIP8_VIDEO_HEIGHT) or ((x + j) >= Global.CHIP8_VIDEO_WIDTH):
+                    break
 
-            if pixel != chip8.video[video_index]:
-                chip8_set_register(chip8, 0xF, 1)
+                if chip8.video[video_index] == 1:
+                    chip8_set_register(chip8, 0xF, 1)
 
-            chip8.video[video_index] ^= pixel
+                chip8.video[video_index] ^= 1
+
+def ex9e(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+    
+    if chip8.keyboard[vx] != 0:
+        chip8.pc += 2
+
+def exa1(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    vx = chip8_get_register(chip8, x)
+
+    if chip8.keyboard[vx] == 0:
+        chip8.pc += 2
+
+def fx07(chip8: Chip8):
+    x = (chip8.opcode >> 8) & 0x000F
+    chip8_set_register(chip8, x, chip8.delay_timer)
 
 def fx15(chip8: Chip8):
     x = (chip8.opcode >> 8) & 0x000F
@@ -290,7 +400,7 @@ def fx1e(chip8: Chip8):
 def fx29(chip8: Chip8):
     x = (chip8.opcode >> 8) & 0x000F
     vx = chip8_get_register(chip8, x)
-    chip8.i = vx
+    chip8.i = Global.CHIP8_FONTSET_ADDRESS + (5 * vx)
 
 def fx33(chip8: Chip8):
     x = (chip8.opcode >> 8) & 0x000F
@@ -298,14 +408,13 @@ def fx33(chip8: Chip8):
     
     digit = vx % 10
     vx /= 10
-    tens = vx % 10
+    tens = int(vx) % 10
     vx /= 10
-    hundreds = vx % 10
-    vx /= 10
+    hundreds = int(vx) % 10
     
-    chip8.memory[chip8.i] = hundreds
-    chip8.memory[chip8.i + 1] = tens
     chip8.memory[chip8.i + 2] = digit
+    chip8.memory[chip8.i + 1] = tens
+    chip8.memory[chip8.i] = hundreds
 
 def fx55(chip8: Chip8):
     x = (chip8.opcode >> 8) & 0x000F
@@ -315,9 +424,8 @@ def fx55(chip8: Chip8):
 
 def fx65(chip8: Chip8):
     x = (chip8.opcode >> 8) & 0x000F
-    vx = chip8_get_register(chip8, x)
 
-    for i in range(vx + 1):
+    for i in range(x + 1):
         chip8_set_register(chip8, i, chip8.memory[chip8.i + i])
 
 def chip8_cycle(chip8: Chip8):
@@ -331,6 +439,8 @@ def chip8_cycle(chip8: Chip8):
     # Decode and execute
     opcode = (chip8.opcode >> 12) & 0x000F
 
+    log("Instruction: %X", chip8.opcode)
+
     if chip8.opcode == 0xE0:
         _00E0(chip8)
     elif chip8.opcode == 0xEE:
@@ -343,16 +453,36 @@ def chip8_cycle(chip8: Chip8):
         _3xnn(chip8)
     elif opcode == 0x04:
         _4xnn(chip8)
+    elif opcode == 0x05:
+        _5xy0(chip8)
     elif opcode == 0x06:
         _6xnn(chip8)
     elif opcode == 0x07:
         _7xnn(chip8)
     elif opcode == 0x08:
-        if (chip8.opcode & 0x000F) == 0:
+        if (chip8.opcode & 0x000F) == 0x00:
             _8xy0(chip8)
+        elif (chip8.opcode & 0x000F) == 0x01:
+            _8xy1(chip8)
+        elif (chip8.opcode & 0x000F) == 0x02:
+            _8xy2(chip8)
+        elif (chip8.opcode & 0x000F) == 0x03:
+            _8xy3(chip8)
+        elif (chip8.opcode & 0x000F) == 0x04:
+            _8xy4(chip8)
+        elif (chip8.opcode & 0x000F) == 0x05:
+            _8xy5(chip8)
+        elif (chip8.opcode & 0x000F) == 0x06:
+            _8xy6(chip8)
+        elif (chip8.opcode & 0x000F) == 0x07:
+            _8xy7(chip8)
+        elif (chip8.opcode & 0x000F) == 0x0E:
+            _8xyE(chip8)
         else:
             log("Invalid instruction: %X", chip8.opcode)
             return result
+    elif opcode ==0x09:
+        _9xy0(chip8)
     elif opcode == 0x0A:
         annn(chip8)
     elif opcode == 0x0B:
@@ -361,8 +491,19 @@ def chip8_cycle(chip8: Chip8):
         cxnn(chip8)
     elif opcode == 0x0D:
         dxyn(chip8)
+    elif opcode == 0x0E:
+        if (chip8.opcode & 0x00FF) == 0xA1:
+            exa1(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x9E:
+            ex9e(chip8)
+        else:
+            log("Invalid instruction: %X", chip8.opcode)
+            return result
+        
     elif opcode == 0x0F:
-        if (chip8.opcode & 0x00FF) == 0x15:
+        if (chip8.opcode & 0x00FF) == 0x07:
+            fx07(chip8)
+        elif (chip8.opcode & 0x00FF) == 0x15:
             fx15(chip8)
         elif (chip8.opcode & 0x00FF) == 0x1E:
             fx1e(chip8)
@@ -423,7 +564,6 @@ def main():
     chip8_load_rom(emulator.chip8, "tetris.rom")
 
     input = Input()
-    gui = GUI()
     is_running = True
     last_counter = time.perf_counter_ns()
     
@@ -434,6 +574,21 @@ def main():
                 is_running = False
             elif (event.type == pygame.KEYDOWN) or (event.type == pygame.KEYUP):
                 is_down = event.type == pygame.KEYDOWN
+
+                key = event.key
+
+                match key:
+                    case pygame.K_UP:
+                        emulator.chip8.keyboard[0x4] = is_down
+                    case pygame.K_LEFT:
+                        emulator.chip8.keyboard[0x5] = is_down
+                    case pygame.K_RIGHT:
+                        emulator.chip8.keyboard[0x6] = is_down
+                    case pygame.K_DOWN:
+                        emulator.chip8.keyboard[0x7] = is_down
+                    case _:
+                        pass
+
             elif (event.type == pygame.MOUSEBUTTONDOWN) or (event.type == pygame.MOUSEBUTTONUP):
                 is_down = event.type == pygame.MOUSEBUTTONDOWN
                 mouse = input.mouse
