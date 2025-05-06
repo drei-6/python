@@ -25,8 +25,36 @@ import pygame
 # The first by of each instruction should be located at an even address.
 # if a program includes sprite data it should be padded... by 2 maybe?
 
+# Rectangle
+class Rectangle:
+    x = 0
+    y = 0
+    width = 0
+    height = 0
+
+    def __init__(self, x, y, width, height):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+# RGBA
+class RGBA:
+    r = 0.0
+    g = 0.0
+    b = 0.0
+    a = 0.0
+
+    def __init__(self, r, g, b, a):
+        self.r = r
+        self.g = g
+        self.b = b
+        self.a = a
+
 # define some globals
 class Global:
+    EMULATOR_INVALID_MODE = 0
+    EMULATOR_CHIP8_MODE = 1
     CHIP8_MONITOR_REFRESH_RATE = 60.0
     CHIP8_RAM_SIZE = 4096
     CHIP8_REGISTER_COUNT = 16
@@ -56,12 +84,52 @@ class Chip8:
 
 # emulator state
 class Emulator:
+    is_debugging = False
     fps = 0.0
+    mode = 0
     chip8 = Chip8()
 
 # log function
 def log(string: str, *args: tuple):
     print(string % args)
+
+# convert rectangle to pygame rectangle
+def rectangle_to_pygame_rect(rectangle: Rectangle):
+    result = pygame.Rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
+    return result
+
+# convert rgba to pygame rgba
+def rgba_to_pygame_rgba(rgba: RGBA):
+    result = (int(rgba.r * 255.0), int(rgba.g * 255.0), int(rgba.b * 255.0), int((1.0 - rgba.a) * 255.0))
+    return result
+
+# draw character
+def draw_character(display: pygame.Surface, font: pygame.font.Font, x: int, y: int, character: str, is_antialiasing: bool, foreground_rgba: RGBA, background_rgba: RGBA):
+    #@TODO: Check for failure with pygame
+    result = 0
+    foreground_rgba = rgba_to_pygame_rgba(foreground_rgba)
+    background_rgba = rgba_to_pygame_rgba(background_rgba)
+    character_surface = font.render(character, is_antialiasing, foreground_rgba, None)
+    background_alpha = background_rgba[3]
+    background_surface = pygame.Surface(character_surface.get_size())
+    background_surface.set_alpha(background_alpha)
+    background_surface.fill(background_rgba)
+    display.blit(background_surface, (x, y))
+    display.blit(character_surface, (x, y))
+
+    result = character_surface.get_size()
+    return result
+
+# draw text
+def draw_text(display: pygame.Surface, font: pygame.font.Font, x: int, y: int, text: str, is_antialiasing: bool, foreground_rgba: RGBA, background_rgba: RGBA):
+    for c in text:
+        if c == '\n':
+            x = 0
+            y += font.get_height()
+            continue
+
+        dimension = draw_character(display, font, x, y, c, is_antialiasing, foreground_rgba, background_rgba)
+        x += dimension[0]
 
 # write to ram
 def chip8_write_to_ram(chip8: Chip8, index: int, value: int):
@@ -226,6 +294,8 @@ def emulator_initialize():
     
     chip8_initialize(result.chip8)
     result.fps = Global.CHIP8_MONITOR_REFRESH_RATE
+    result.mode = Global.EMULATOR_CHIP8_MODE
+    result.is_debugging = False
 
     return result
 
@@ -233,6 +303,10 @@ def emulator_initialize():
 def emulator_cycle(emulator: Emulator):
     result = chip8_cycle(emulator.chip8)
     return result
+
+# emulator draw
+def emulator_draw(emulator: Emulator, display: pygame.Surface, font: pygame.font.Font):
+    draw_text(display, font, 0, 0, "Hello, world!\n  Hello, world!\n    Hello, world!", True, RGBA(1.0, 0.0, 0.0, 0.0), RGBA(0.0, 1.0, 0.0, 0.0))
 
 # entry point
 def main():
@@ -257,6 +331,7 @@ def main():
     
     # initialize emulator
     emulator = emulator_initialize()
+    font = pygame.font.Font(None, 32)
 
     # load rom
     if not emulator_load_rom(emulator, "tetris.ch8"):
@@ -278,13 +353,16 @@ def main():
             break
 
         # emulator cycle
+        """
         if not emulator_cycle(emulator):
             break
-
-        # @TODO: draw emulator video
+        """        
         
         # clear screen to black
         display.fill((0, 0, 0))
+
+        # draw emulator video
+        emulator_draw(emulator, display, font)
 
         # timer
         work_counter = time.perf_counter_ns()
