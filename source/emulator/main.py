@@ -82,9 +82,14 @@ class Chip8:
     display = [0] * (Global.CHIP8_DISPLAY_WIDTH * Global.CHIP8_DISPLAY_HEIGHT) # display
     opcode = 0 # current opcode being executed
 
+class Debugger:
+    is_debugging = False
+    line = 0
+    instruction = {}
+
 # emulator state
 class Emulator:
-    is_debugging = False
+    debugger = Debugger()
     fps = 0.0
     mode = 0
     chip8 = Chip8()
@@ -102,6 +107,15 @@ def rectangle_to_pygame_rect(rectangle: Rectangle):
 def rgba_to_pygame_rgba(rgba: RGBA):
     result = (int(rgba.r * 255.0), int(rgba.g * 255.0), int(rgba.b * 255.0), int((1.0 - rgba.a) * 255.0))
     return result
+
+# draw rectangle
+def draw_rectangle(display: pygame.Surface, rectangle: Rectangle, rgba: RGBA):
+    rectangle = rectangle_to_pygame_rect(rectangle)
+    rgba = rgba_to_pygame_rgba(rgba)
+    rectangle_surface = pygame.Surface((rectangle.width, rectangle.height))
+    rectangle_surface.set_alpha(rgba[3])
+    rectangle_surface.fill(rgba)
+    display.blit(rectangle_surface, (rectangle.left, rectangle.top))
 
 # draw character
 def draw_character(display: pygame.Surface, font: pygame.font.Font, x: int, y: int, character: str, is_antialiasing: bool, foreground_rgba: RGBA, background_rgba: RGBA):
@@ -249,8 +263,11 @@ def chip8_decode_and_execute(chip8: Chip8):
 
     return True
 
-def chip8_cycle(chip8: Chip8):
+def chip8_cycle(chip8: Chip8, debugger: Debugger):
     result = False
+
+    if debugger.is_debugging:
+        return True
 
     # fetch instruction
     program_counter = chip8_get_program_counter(chip8)
@@ -278,6 +295,8 @@ def chip8_cycle(chip8: Chip8):
     if sound_timer > 0:
         chip8_set_delay_timer(chip8, sound_timer - 1)
 
+    debugger.is_debugging = True
+
     return True
     
 # load emulator rom
@@ -295,18 +314,61 @@ def emulator_initialize():
     chip8_initialize(result.chip8)
     result.fps = Global.CHIP8_MONITOR_REFRESH_RATE
     result.mode = Global.EMULATOR_CHIP8_MODE
-    result.is_debugging = False
+
+    debugger = result.debugger
+    debugger.is_debugging = False
+    debugger.instruction = {
+        "": "",
+        "Annn": "LD I, %s",
+    }
 
     return result
 
 # emulate one cycle
 def emulator_cycle(emulator: Emulator):
-    result = chip8_cycle(emulator.chip8)
+    result = chip8_cycle(emulator.chip8, emulator.debugger)
     return result
+
+# chip 8 opcode to string
+def chip8_opcode_to_string(chip8:Chip8, debugger: Debugger):
+    result = ""
+
+    # decode
+    opcode_high_upper_nibble = (chip8.opcode >> 12) & 0x000F
+    instruction_name = ""
+
+    if opcode_high_upper_nibble == 0:
+        if (chip8.opcode & 0x00FF) == 0xE0:
+            result = "00E0"
+        elif (chip8.opcode & 0x00FF) == 0xEE:
+            result = "00EE"
+        else:
+            result = "0nnn"
+    elif opcode_high_upper_nibble == 0x0A:
+        result = debugger.instruction["Annn"] % hex(chip8.opcode & 0x0FFF)
+    else:
+        pass # @TODO: Report it?
+
+    return result
+
+# draw debugger
+def emulator_draw_debugger(emulator: Emulator, display: pygame.Surface, font: pygame.font.Font):
+    display_width = display.get_width()
+    display_height = display.get_height()
+
+    # draw background
+    draw_rectangle(display, Rectangle(display_width // 2, 0, display_width // 2, display_height), RGBA(1.0, 0.0, 0.0, 0.8))
+
+    # opcode to string
+    instruction = chip8_opcode_to_string(emulator.chip8, emulator.debugger)
+
+    # draw instructions
+    draw_text(display, font, 0, 0, instruction, True, RGBA(1.0, 0.0, 0.0, 0.0), RGBA(0.0, 0.0, 0.0, 1.0))
 
 # emulator draw
 def emulator_draw(emulator: Emulator, display: pygame.Surface, font: pygame.font.Font):
-    draw_text(display, font, 0, 0, "Hello, world!\n  Hello, world!\n    Hello, world!", True, RGBA(1.0, 0.0, 0.0, 0.0), RGBA(0.0, 1.0, 0.0, 0.0))
+    if emulator.debugger.is_debugging:
+        emulator_draw_debugger(emulator, display, font)
 
 # entry point
 def main():
@@ -353,10 +415,8 @@ def main():
             break
 
         # emulator cycle
-        """
         if not emulator_cycle(emulator):
-            break
-        """        
+            break   
         
         # clear screen to black
         display.fill((0, 0, 0))
