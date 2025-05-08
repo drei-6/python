@@ -66,7 +66,7 @@ class Global:
     CHIP8_FONT_HEIGHT = 5
     CHIP8_SPRITE_WIDTH = 8
     CHIP8_ENTRY_POINT_ADDRESS = 0x200
-    CHIP8_FONTSET_ADDRESS = 0x50 # not on the specification
+    CHIP8_FONTSET_ADDRESS = 0x50 # not on the "specification"
     
 # chip 8 state
 class Chip8:
@@ -145,65 +145,6 @@ def draw_text(display: pygame.Surface, font: pygame.font.Font, x: int, y: int, t
         dimension = draw_character(display, font, x, y, c, is_antialiasing, foreground_rgba, background_rgba)
         x += dimension[0]
 
-# write to ram
-def chip8_write_to_ram(chip8: Chip8, index: int, value: int):
-    assert((index >= 0) and (index < Global.CHIP8_RAM_SIZE))
-    chip8.ram[index] = value
-
-# set program counter
-def chip8_set_program_counter(chip8: Chip8, value: int):
-    assert((value >= Global.CHIP8_ENTRY_POINT_ADDRESS) and (value < Global.CHIP8_RAM_SIZE))
-    chip8.program_counter = value
-
-# read to ram
-def chip8_read_from_ram(chip8: Chip8, index: int):
-    assert((index >= 0) and (index < Global.CHIP8_RAM_SIZE))
-    result = chip8.ram[index]
-    return result
-
-# get program counter
-def chip8_get_program_counter(chip8: Chip8):
-    assert((chip8.program_counter >= Global.CHIP8_ENTRY_POINT_ADDRESS) and (chip8.program_counter < Global.CHIP8_RAM_SIZE))
-    result = chip8.program_counter
-    return result
-
-# set opcode
-def chip8_set_opcode(chip8: Chip8, value: int):
-    assert((value >= 0) and (value <= 0xFFFF))
-    chip8.opcode = value
-
-# get opcode
-def chip8_get_opcode(chip8: Chip8):
-    assert((chip8.opcode >= 0) and (chip8.opcode <= 0xFFFF))
-    result = chip8.opcode
-    return result
-
-# set delay timer
-def chip8_set_delay_timer(chip8: Chip8, value: int):
-    assert((value >= 0) and (value <= 60))
-    chip8.delay_timer = value
-
-# set sound timer
-def chip8_set_sound_timer(chip8: Chip8, value: int):
-    assert((value >= 0) and (value <= 60))
-    chip8.sound_timer = value
-
-# get delay timer
-def chip8_get_delay_timer(chip8: Chip8):
-    assert((chip8.delay_timer >= 0) and (chip8.delay_timer <= 60))
-    result = chip8.delay_timer
-    return result
-
-# get sound timer
-def chip8_get_sound_timer(chip8: Chip8):
-    assert((chip8.sound_timer >= 0) and (chip8.sound_timer <= 60))
-    result = chip8.sound_timer
-    return result
-
-def chip8_set_index(chip8: Chip8, value: int):
-    assert((value >= 0) and (value < Global.CHIP8_RAM_SIZE))
-    chip8.index = value
-
 def chip8_initialize(chip8: Chip8):
     # this is the font 8x5
     font = [
@@ -227,9 +168,11 @@ def chip8_initialize(chip8: Chip8):
 
     # write the font to memory at location x
     for i in range(len(font)):
-        chip8_write_to_ram(chip8, Global.CHIP8_FONTSET_ADDRESS + i, font[i])
 
-    chip8_set_program_counter(chip8, Global.CHIP8_ENTRY_POINT_ADDRESS)
+        chip8.ram[Global.CHIP8_FONTSET_ADDRESS + i] = font[i]
+
+    # set the program_counter
+    chip8.program_counter = Global.CHIP8_ENTRY_POINT_ADDRESS
 
 # load chip 8 rom
 def chip8_load_rom(chip8: Chip8, file_name: str):
@@ -240,24 +183,73 @@ def chip8_load_rom(chip8: Chip8, file_name: str):
 
     # copy buffer to ram starting at the address x
     for i in range(len(buffer)):
-        chip8_write_to_ram(chip8, Global.CHIP8_ENTRY_POINT_ADDRESS + i, buffer[i])
+        chip8.ram[Global.CHIP8_ENTRY_POINT_ADDRESS + i] = buffer[i]
 
     # release memory?
     buffer = []
 
-def annn(chip8: Chip8):
-    nnn = chip8_get_opcode(chip8) & 0x0FFF
-    chip8_set_index(chip8, nnn)
+# RET
+def chip8_00EE(chip8: Chip8):
+    chip8.program_counter = chip8.stack[chip8.stack_pointer] # set program_counter to the address at top of the stack
+    chip8.stack_pointer -= 1 # decrement the stack pointer
+
+# LD I, addr
+def chip8_annn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF
+    chip8.index = nnn
+
+# CALL addr
+def chip8_2nnn(chip8: Chip8):
+    nnn = chip8.opcode & 0x0FFF # isolate nnn
+    chip8.stack_pointer += 1 # increment stack pointer
+    chip8.stack[chip8.stack_pointer] = chip8.program_counter # set top of the stack to program counter
+    chip8.program_counter = nnn # set program counter to nnn
+
+# LD Vx, byte
+def chip8_6xkk(chip8: Chip8):
+    kk = chip8.opcode & 0x00FF # isolate kk
+    x = (chip8.opcode >> 8) & 0x000F # isolate x
+    chip8.register[x] = kk # set register 'x' to 'kk'
+
+# ADD Vx, byte
+def chip8_7xkk(chip8: Chip8):
+    kk = chip8.opcode & 0x00FF # isolate 'kk'
+    x = (chip8.opcode >> 8) & 0x000F # isolate 'x'
+    chip8.register[x] += kk # add 'kk' to register 'x'
+
+def chip8_dxyn(chip8: Chip8):
+    n = chip8.opcode & 0x000F # isolate 'n'
+    index_x = (chip8.opcode >> 8) & 0x000F # isolate 'x'
+    index_y = (chip8.opcode >> 4) & 0x000F # isolate 'y'
+    x = chip8.register[index_x]
+    y = chip8.register[index_y]
+
+# fetch the opcode
+def chip8_fetch(chip8: Chip8):
+    assert(chip8.program_counter < Global.CHIP8_RAM_SIZE)
+
+    result = (chip8.ram[chip8.program_counter] << 8) | (chip8.ram[chip8.program_counter + 1])
+    chip8.program_counter += 2
+
+    return result
 
 # decode and execute
 def chip8_decode_and_execute(chip8: Chip8):
+    assert(chip8.opcode < 0xFFFF)
+
     result = False
+    opcoden4 = (chip8.opcode >> 12) & 0x000F
 
-    opcode = chip8_get_opcode(chip8)
-    opcoden4 = (opcode >> 12) & 0x000F
-
-    if opcoden4 == 0x0A:
-        annn(chip8)
+    if chip8.opcode == 0xEE:
+        chip8_00EE(chip8)
+    elif opcoden4 == 0x0A:
+        chip8_annn(chip8)
+    elif opcoden4 == 0x02:
+        chip8_2nnn(chip8)
+    elif opcoden4 == 0x06:
+        chip8_6xkk(chip8)
+    elif opcoden4 == 0x07:
+        chip8_7xkk(chip8)
     else:
         return result
 
@@ -266,34 +258,21 @@ def chip8_decode_and_execute(chip8: Chip8):
 def chip8_cycle(chip8: Chip8, debugger: Debugger):
     result = False
 
-    if debugger.is_debugging:
-        return True
-
-    # fetch instruction
-    program_counter = chip8_get_program_counter(chip8)
-    byte0 = chip8_read_from_ram(chip8, program_counter)
-    byte1 = chip8_read_from_ram(chip8, program_counter + 1)
-    chip8_set_opcode(chip8, (byte0 << 8) | byte1)
-
-    # advance program counter by 2
-    chip8_set_program_counter(chip8, program_counter + 2)
+    # fetch the opcode
+    chip8.opcode = chip8_fetch(chip8)
 
     # decode and execute
-    if(chip8_decode_and_execute(chip8)):
-        pass
-    else:
-        log("Invalid instruction: 0x%X", chip8_get_opcode(chip8))
+    if not chip8_decode_and_execute(chip8):
+        log("Invalid instruction: 0x%X", chip8.opcode)
         return result
 
     # delay timer
-    delay_timer = chip8_get_delay_timer(chip8)
-    if delay_timer > 0:
-        chip8_set_delay_timer(chip8, delay_timer - 1)
+    if chip8.delay_timer > 0:
+        chip8.delay_timer -= 1
     
     # sound timer
-    sound_timer = chip8_get_sound_timer(chip8)
-    if sound_timer > 0:
-        chip8_set_delay_timer(chip8, sound_timer - 1)
+    if chip8.sound_timer > 0:
+        chip8.sound_timer -= 1
 
     debugger.is_debugging = True
 
